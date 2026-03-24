@@ -1,4 +1,5 @@
 import logging
+import sys
 from telegram.ext import Application, CommandHandler, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
 from bot.config import BOT_TOKEN, LOG_LEVEL
 from bot.handlers.commands import *
@@ -7,23 +8,41 @@ from bot.handlers.callbacks import morning_lock_callback
 from bot.scheduler.jobs import schedule_morning_job
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
-from bot.models.database import engine, create_tables
+from bot.models.database import engine, create_tables, Base
 import pytz
 
-logging.basicConfig(level=getattr(logging, LOG_LEVEL))
+# Configure logging
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Setup APScheduler with persistent store
-jobstores = {
-    'default': SQLAlchemyJobStore(url=engine.url)
-}
-scheduler = AsyncIOScheduler(jobstores=jobstores, timezone=pytz.UTC)
+try:
+    jobstores = {
+        'default': SQLAlchemyJobStore(url=engine.url)
+    }
+    scheduler = AsyncIOScheduler(jobstores=jobstores, timezone=pytz.UTC)
+except Exception as e:
+    logger.error(f"Failed to create scheduler: {e}")
+    sys.exit(1)
 
-# Create database tables
-create_tables()
+# Create database tables BEFORE starting scheduler or bot
+try:
+    logger.info("Creating database tables...")
+    create_tables()
+    logger.info("Tables created (if they didn't exist).")
+    logger.info(f"Using database: {engine.url}")
+except Exception as e:
+    logger.error(f"Failed to create tables: {e}")
+    sys.exit(1)
 
+# Start the scheduler
 scheduler.start()
 
 def main():
+    # Create Application
     application = Application.builder().token(BOT_TOKEN).build()
 
     # Conversation handler for onboarding
@@ -40,6 +59,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel_onboarding)],
     )
 
+    # Register handlers
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("done", done_command))
     application.add_handler(CommandHandler("missed", missed_command))
@@ -55,6 +75,8 @@ def main():
     application.add_handler(CommandHandler("delete", delete_command))
     application.add_handler(CallbackQueryHandler(morning_lock_callback, pattern="morning_lock"))
 
+    # Start the bot
+    logger.info("Starting bot...")
     application.run_polling()
 
 if __name__ == "__main__":
