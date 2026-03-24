@@ -1,3 +1,4 @@
+from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, MessageHandler, filters
 from bot.models.database import SessionLocal
@@ -19,8 +20,17 @@ async def start_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def timezone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tz_str = update.message.text.strip()
     if tz_str not in pytz.all_timezones:
-        await update.message.reply_text("Invalid time zone. Please try again.")
-        return TIMEZONE
+        # Try mapping common names
+        mapping = {
+            "algeria": "Africa/Algiers",
+            "usa": "America/New_York",
+            "uk": "Europe/London",
+        }
+        if tz_str.lower() in mapping:
+            tz_str = mapping[tz_str.lower()]
+        else:
+            await update.message.reply_text("Invalid time zone. Please try again.")
+            return TIMEZONE
     context.user_data["timezone"] = tz_str
     await update.message.reply_text("Great. Now send your daily plan in the required format.\n"
                                     "Use the format with sections and bullet points.")
@@ -67,32 +77,55 @@ async def wake_up_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not parse_time_string(wake_up):
         wake_up = "07:00"
     context.user_data["wake_up_time"] = wake_up
-    # Save user to database
+
     db = SessionLocal()
-    user = User(
-        telegram_id=update.effective_user.id,
-        timezone=context.user_data["timezone"],
-        reminder_interval_hours=context.user_data["reminder_interval"],
-        morning_lock_minutes=context.user_data["morning_lock"],
-        wake_up_time=context.user_data["wake_up_time"],
-        alter_ego=context.user_data["alter_ego"]
-    )
-    db.add(user)
-    db.commit()
-    # Save plan
-    plan = Plan(
-        user_id=user.id,
-        categories=context.user_data["categories"],
-        rules=context.user_data["rules"]
-    )
-    db.add(plan)
-    db.commit()
+    telegram_id = update.effective_user.id
+    # Check if user already exists
+    user = db.query(User).filter(User.telegram_id == telegram_id).first()
+    if user:
+        # Update existing user
+        user.timezone = context.user_data["timezone"]
+        user.reminder_interval_hours = context.user_data["reminder_interval"]
+        user.morning_lock_minutes = context.user_data["morning_lock"]
+        user.wake_up_time = wake_up
+        user.alter_ego = context.user_data["alter_ego"]
+        user.last_active = datetime.utcnow()
+        # Delete old plan and add new one
+        db.query(Plan).filter(Plan.user_id == user.id).delete()
+        new_plan = Plan(
+            user_id=user.id,
+            categories=context.user_data["categories"],
+            rules=context.user_data["rules"]
+        )
+        db.add(new_plan)
+        db.commit()
+    else:
+        # Create new user
+        user = User(
+            telegram_id=telegram_id,
+            timezone=context.user_data["timezone"],
+            reminder_interval_hours=context.user_data["reminder_interval"],
+            morning_lock_minutes=context.user_data["morning_lock"],
+            wake_up_time=wake_up,
+            alter_ego=context.user_data["alter_ego"]
+        )
+        db.add(user)
+        db.commit()
+        # Save plan
+        plan = Plan(
+            user_id=user.id,
+            categories=context.user_data["categories"],
+            rules=context.user_data["rules"]
+        )
+        db.add(plan)
+        db.commit()
     db.close()
+
     await update.message.reply_text("Setup complete! Your first morning sequence will start tomorrow.")
     # Schedule morning job
     from bot.scheduler.jobs import schedule_morning_job
     from bot.main import scheduler
-    schedule_morning_job(scheduler, user.telegram_id, user.wake_up_time, user.timezone)
+    schedule_morning_job(scheduler, telegram_id, user.wake_up_time, user.timezone)
     return ConversationHandler.END
 
 async def cancel_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE):
