@@ -11,6 +11,8 @@ import pytz
 TIMEZONE, PLAN, ALTER_EGO, REMINDER_INTERVAL, MORNING_LOCK, WAKE_UP_TIME = range(6)
 
 async def start_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Clear any previous conversation data
+    context.user_data.clear()
     await update.message.reply_text(
         "Welcome to Discipline Bot! Let's set up your account.\n\n"
         "Please enter your time zone (e.g., Europe/London, America/New_York)."
@@ -73,61 +75,70 @@ async def morning_lock_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return WAKE_UP_TIME
 
 async def wake_up_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    wake_up = update.message.text.strip()
-    if not parse_time_string(wake_up):
-        wake_up = "07:00"
-    context.user_data["wake_up_time"] = wake_up
+    try:
+        wake_up = update.message.text.strip()
+        if not parse_time_string(wake_up):
+            wake_up = "07:00"
+        context.user_data["wake_up_time"] = wake_up
 
-    db = SessionLocal()
-    telegram_id = update.effective_user.id
-    # Check if user already exists
-    user = db.query(User).filter(User.telegram_id == telegram_id).first()
-    if user:
-        # Update existing user
-        user.timezone = context.user_data["timezone"]
-        user.reminder_interval_hours = context.user_data["reminder_interval"]
-        user.morning_lock_minutes = context.user_data["morning_lock"]
-        user.wake_up_time = wake_up
-        user.alter_ego = context.user_data["alter_ego"]
-        user.last_active = datetime.utcnow()
-        # Delete old plan and add new one
-        db.query(Plan).filter(Plan.user_id == user.id).delete()
-        new_plan = Plan(
-            user_id=user.id,
-            categories=context.user_data["categories"],
-            rules=context.user_data["rules"]
-        )
-        db.add(new_plan)
-        db.commit()
-    else:
-        # Create new user
-        user = User(
-            telegram_id=telegram_id,
-            timezone=context.user_data["timezone"],
-            reminder_interval_hours=context.user_data["reminder_interval"],
-            morning_lock_minutes=context.user_data["morning_lock"],
-            wake_up_time=wake_up,
-            alter_ego=context.user_data["alter_ego"]
-        )
-        db.add(user)
-        db.commit()
-        # Save plan
-        plan = Plan(
-            user_id=user.id,
-            categories=context.user_data["categories"],
-            rules=context.user_data["rules"]
-        )
-        db.add(plan)
-        db.commit()
-    db.close()
+        db = SessionLocal()
+        telegram_id = update.effective_user.id
+        # Check if user already exists
+        user = db.query(User).filter(User.telegram_id == telegram_id).first()
+        if user:
+            # Update existing user
+            user.timezone = context.user_data["timezone"]
+            user.reminder_interval_hours = context.user_data["reminder_interval"]
+            user.morning_lock_minutes = context.user_data["morning_lock"]
+            user.wake_up_time = wake_up
+            user.alter_ego = context.user_data["alter_ego"]
+            user.last_active = datetime.utcnow()
+            # Delete old plan and add new one
+            db.query(Plan).filter(Plan.user_id == user.id).delete()
+            new_plan = Plan(
+                user_id=user.id,
+                categories=context.user_data["categories"],
+                rules=context.user_data["rules"]
+            )
+            db.add(new_plan)
+            db.commit()
+        else:
+            # Create new user
+            user = User(
+                telegram_id=telegram_id,
+                timezone=context.user_data["timezone"],
+                reminder_interval_hours=context.user_data["reminder_interval"],
+                morning_lock_minutes=context.user_data["morning_lock"],
+                wake_up_time=wake_up,
+                alter_ego=context.user_data["alter_ego"]
+            )
+            db.add(user)
+            db.commit()
+            # Save plan
+            plan = Plan(
+                user_id=user.id,
+                categories=context.user_data["categories"],
+                rules=context.user_data["rules"]
+            )
+            db.add(plan)
+            db.commit()
+        db.close()
 
-    await update.message.reply_text("Setup complete! Your first morning sequence will start tomorrow.")
-    # Schedule morning job
-    from bot.scheduler.jobs import schedule_morning_job
-    from bot.main import scheduler
-    schedule_morning_job(scheduler, telegram_id, user.wake_up_time, user.timezone)
-    return ConversationHandler.END
+        await update.message.reply_text("Setup complete! Your first morning sequence will start tomorrow.")
+        # Schedule morning job
+        from bot.scheduler.jobs import schedule_morning_job
+        from bot.main import scheduler
+        schedule_morning_job(scheduler, telegram_id, user.wake_up_time, user.timezone)
+
+    except Exception as e:
+        # If anything fails, still end the conversation and inform the user
+        await update.message.reply_text(f"An error occurred: {e}. Please try /start again.")
+    finally:
+        # IMPORTANT: Clear the conversation state to avoid stale replies
+        context.user_data.clear()
+        return ConversationHandler.END
 
 async def cancel_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Onboarding cancelled.")
+    context.user_data.clear()
     return ConversationHandler.END
