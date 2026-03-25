@@ -1,7 +1,7 @@
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler
 from bot.models.database import SessionLocal
-from bot.models.models import User, DailyLog
+from bot.models.models import User, DailyLog, Plan, WeeklyAnalytics
 from bot.utils.formatters import format_daily_summary
 from bot.services.focus import start_focus, stop_focus
 from datetime import datetime, date
@@ -9,7 +9,6 @@ import json
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    # Check if user exists, else start onboarding
     db = SessionLocal()
     user = db.query(User).filter(User.telegram_id == user_id).first()
     db.close()
@@ -286,3 +285,17 @@ async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("No data found.")
     db.close()
+
+async def morning_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Manually start the morning sequence for today."""
+    user_id = update.effective_user.id
+    db = SessionLocal()
+    user = db.query(User).filter(User.telegram_id == user_id).first()
+    if not user:
+        await update.message.reply_text("Please /start first.")
+        db.close()
+        return
+    db.close()
+    # Import morning_job inside the function to avoid circular import
+    from bot.scheduler.jobs import morning_job
+    await morning_job(context, user_id)

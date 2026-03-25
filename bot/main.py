@@ -73,6 +73,7 @@ def main():
     application.add_handler(CommandHandler("addfuture", addfuture_command))
     application.add_handler(CommandHandler("export", export_command))
     application.add_handler(CommandHandler("delete", delete_command))
+    application.add_handler(CommandHandler("morning", morning_command))  # <-- NEW command
     application.add_handler(CallbackQueryHandler(morning_lock_callback, pattern="morning_lock"))
 
     # Start the bot
