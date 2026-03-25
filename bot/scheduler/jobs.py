@@ -9,8 +9,7 @@ from bot.utils.time_utils import parse_time_string
 
 logger = logging.getLogger(__name__)
 
-# In-memory state for ongoing morning conversations (user_id -> step)
-# Step 0: waiting for wake-up time; step 1: waiting for plan decision; step 2: done
+# In-memory state for ongoing morning conversations (user_id -> dict)
 morning_states = {}
 
 async def morning_job(context: ContextTypes.DEFAULT_TYPE, user_id: int):
@@ -31,8 +30,10 @@ async def morning_job(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     # Set the state so that the next message from this user is handled as the wake-up time
     morning_states[user_id] = {"step": 0}
 
-async def handle_morning_message(update, context, user_id):
+async def handle_morning_message(update, context, user_id=None):
     """Called from a message handler when a user is in a morning sequence."""
+    # For use in message handler, we need to get user_id from update
+    user_id = user_id or update.effective_user.id
     state = morning_states.get(user_id)
     if not state:
         return False  # not in morning mode
@@ -141,8 +142,9 @@ async def plan_decision_callback_handler(update, context, user_id):
     del morning_states[user_id]
     return True
 
-async def handle_new_plan_during_morning(update, context, user_id):
+async def handle_new_plan_during_morning(update, context, user_id=None):
     """When user sends a plan while in morning sequence and expecting it."""
+    user_id = user_id or update.effective_user.id
     state = morning_states.get(user_id)
     if not state or state.get("step") != 3:
         return False
