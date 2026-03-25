@@ -1,17 +1,16 @@
 from datetime import datetime
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, MessageHandler, filters
 from bot.models.database import SessionLocal
-from bot.models.models import User, Plan
-from bot.services.planner import parse_plan_text
+from bot.models.models import User, Plan, DailyLog
+from bot.services.planner import parse_plan_text, create_daily_tasks_from_plan
 from bot.utils.time_utils import parse_time_string
 import pytz
 
-# Conversation states
+# Conversation states for onboarding
 TIMEZONE, PLAN, ALTER_EGO, REMINDER_INTERVAL, MORNING_LOCK, WAKE_UP_TIME = range(6)
 
 async def start_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Clear any previous conversation data
     context.user_data.clear()
     await update.message.reply_text(
         "Welcome to Discipline Bot! Let's set up your account.\n\n"
@@ -22,12 +21,7 @@ async def start_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def timezone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tz_str = update.message.text.strip()
     if tz_str not in pytz.all_timezones:
-        # Try mapping common names
-        mapping = {
-            "algeria": "Africa/Algiers",
-            "usa": "America/New_York",
-            "uk": "Europe/London",
-        }
+        mapping = {"algeria": "Africa/Algiers", "usa": "America/New_York", "uk": "Europe/London"}
         if tz_str.lower() in mapping:
             tz_str = mapping[tz_str.lower()]
         else:
@@ -83,17 +77,14 @@ async def wake_up_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         db = SessionLocal()
         telegram_id = update.effective_user.id
-        # Check if user already exists
         user = db.query(User).filter(User.telegram_id == telegram_id).first()
         if user:
-            # Update existing user
             user.timezone = context.user_data["timezone"]
             user.reminder_interval_hours = context.user_data["reminder_interval"]
             user.morning_lock_minutes = context.user_data["morning_lock"]
             user.wake_up_time = wake_up
             user.alter_ego = context.user_data["alter_ego"]
             user.last_active = datetime.utcnow()
-            # Delete old plan and add new one
             db.query(Plan).filter(Plan.user_id == user.id).delete()
             new_plan = Plan(
                 user_id=user.id,
@@ -103,7 +94,6 @@ async def wake_up_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             db.add(new_plan)
             db.commit()
         else:
-            # Create new user
             user = User(
                 telegram_id=telegram_id,
                 timezone=context.user_data["timezone"],
@@ -114,7 +104,6 @@ async def wake_up_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             db.add(user)
             db.commit()
-            # Save plan
             plan = Plan(
                 user_id=user.id,
                 categories=context.user_data["categories"],
@@ -125,16 +114,13 @@ async def wake_up_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.close()
 
         await update.message.reply_text("Setup complete! Your first morning sequence will start tomorrow.")
-        # Schedule morning job
         from bot.scheduler.jobs import schedule_morning_job
         from bot.main import scheduler
         schedule_morning_job(scheduler, telegram_id, user.wake_up_time, user.timezone)
 
     except Exception as e:
-        # If anything fails, still end the conversation and inform the user
-        await update.message.reply_text(f"An error occurred: {e}. Please try /start again.")
+        await update.message.reply_text(f"Error: {e}. Please try /start again.")
     finally:
-        # IMPORTANT: Clear the conversation state to avoid stale replies
         context.user_data.clear()
         return ConversationHandler.END
 

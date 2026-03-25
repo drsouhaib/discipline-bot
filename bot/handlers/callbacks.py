@@ -1,25 +1,20 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+from bot.scheduler.jobs import morning_lock_callback_handler, plan_decision_callback_handler
 
 async def morning_lock_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    # Mark morning confirmed in the user's daily log
-    from bot.models.database import SessionLocal
-    from bot.models.models import DailyLog, User
-    from datetime import date
-    db = SessionLocal()
-    user = db.query(User).filter(User.telegram_id == user_id).first()
-    if user:
-        today = date.today()
-        log = db.query(DailyLog).filter(DailyLog.user_id == user.id, DailyLog.date == today).first()
-        if log:
-            log.morning_confirmed = True
-            # Check if late
-            # We need to store the time of lock send vs press
-            # For simplicity, assume not late
-            db.commit()
-    db.close()
-    await query.edit_message_text("✅ Morning confirmed. Let's start the day.")
-    # Continue with plan confirmation (could be a separate callback)
+    """Handle morning lock button press."""
+    user_id = update.callback_query.from_user.id
+    handled = await morning_lock_callback_handler(update, context, user_id)
+    if not handled:
+        # Fallback: maybe it's the old style (for onboarding)
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text("Morning confirmation received. Continuing...")
+
+async def plan_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle plan decision (same/change)."""
+    user_id = update.callback_query.from_user.id
+    handled = await plan_decision_callback_handler(update, context, user_id)
+    if not handled:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text("Plan decision received.")

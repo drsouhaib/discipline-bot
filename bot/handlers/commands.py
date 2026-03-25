@@ -1,12 +1,14 @@
-from telegram import Update
-from telegram.ext import ContextTypes, CommandHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
 from bot.models.database import SessionLocal
 from bot.models.models import User, DailyLog, Plan, WeeklyAnalytics
-from bot.utils.formatters import format_daily_summary
 from bot.services.focus import start_focus, stop_focus
+from bot.services.planner import create_daily_tasks_from_plan
+from bot.utils.formatters import format_daily_summary
 from datetime import datetime, date
 import json
 
+# ---------- Existing commands ----------
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     db = SessionLocal()
@@ -18,7 +20,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Welcome to Discipline Bot. Let's set up your account.\n"
             "First, please send your time zone (e.g., Europe/London)."
         )
-        # We'll use a conversation handler for onboarding.
+        # The conversation handler in main.py will take over
         return
     else:
         await update.message.reply_text(
@@ -40,7 +42,7 @@ async def done_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today = date.today()
     log = db.query(DailyLog).filter(DailyLog.user_id == user.id, DailyLog.date == today).first()
     if not log:
-        await update.message.reply_text("No active day. Wait for morning sequence.")
+        await update.message.reply_text("No active day. Start morning sequence first.")
         db.close()
         return
     # Find task
@@ -91,7 +93,7 @@ async def missed_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today = date.today()
     log = db.query(DailyLog).filter(DailyLog.user_id == user.id, DailyLog.date == today).first()
     if not log:
-        await update.message.reply_text("No active day. Wait for morning sequence.")
+        await update.message.reply_text("No active day. Start morning sequence first.")
         db.close()
         return
     found = None
@@ -194,7 +196,6 @@ async def weekly_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Please /start first.")
         db.close()
         return
-    # Get last 7 logs
     from datetime import timedelta
     start = date.today() - timedelta(days=7)
     logs = db.query(DailyLog).filter(
@@ -206,7 +207,6 @@ async def weekly_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.close()
         return
     avg_score = sum(l.discipline_score for l in logs if l.discipline_score) / len(logs)
-    # Build simple ASCII graph
     graph_lines = ["📊 *Weekly Scores*"]
     for log in logs:
         bar_len = int((log.discipline_score or 0) / 10)
@@ -237,9 +237,7 @@ async def addfuture_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not message:
         await update.message.reply_text("Please provide a message: /addfuture <message>")
         return
-    # Store in user's custom future messages list (add to JSON field)
-    # For simplicity, we'll store in a separate table or JSON column.
-    # I'll skip implementation for brevity.
+    # For simplicity, we'll just acknowledge
     await update.message.reply_text("Future message added.")
 
 async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -250,7 +248,6 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Please /start first.")
         db.close()
         return
-    # Collect all data
     plans = db.query(Plan).filter(Plan.user_id == user.id).all()
     logs = db.query(DailyLog).filter(DailyLog.user_id == user.id).all()
     weekly = db.query(WeeklyAnalytics).filter(WeeklyAnalytics.user_id == user.id).all()
@@ -265,9 +262,7 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "logs": [{"date": l.date.isoformat(), "tasks": l.tasks, "score": l.discipline_score} for l in logs],
         "weekly": [{"week_start": w.week_start.isoformat(), "avg_score": w.avg_score} for w in weekly],
     }
-    import json
     json_str = json.dumps(data, indent=2)
-    # Send as file
     await update.message.reply_document(document=json_str.encode(), filename="discipline_bot_export.json")
     db.close()
 
@@ -286,8 +281,9 @@ async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No data found.")
     db.close()
 
+# ---------- Morning command (manually trigger) ----------
 async def morning_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Manually start the morning sequence for today."""
+    """Manually start the morning sequence."""
     user_id = update.effective_user.id
     db = SessionLocal()
     user = db.query(User).filter(User.telegram_id == user_id).first()
@@ -296,6 +292,6 @@ async def morning_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.close()
         return
     db.close()
-    # Import morning_job inside the function to avoid circular import
+    # Call the same job as the scheduled one
     from bot.scheduler.jobs import morning_job
     await morning_job(context, user_id)
