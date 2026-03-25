@@ -1,12 +1,19 @@
 import logging
 import sys
-from telegram import BotCommand, Update
-from telegram.ext import Application, CommandHandler, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram import BotCommand
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+    CallbackQueryHandler,
+)
 from bot.config import BOT_TOKEN, LOG_LEVEL
 from bot.handlers.commands import *
 from bot.handlers.conversations import *
 from bot.handlers.callbacks import morning_lock_callback, plan_decision_callback
-from bot.scheduler.jobs import schedule_morning_job, handle_morning_message, handle_new_plan_during_morning
+from bot.scheduler.jobs import handle_morning_message, handle_new_plan_during_morning
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from bot.models.database import engine, create_tables
@@ -81,7 +88,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel_onboarding)],
     )
 
-    # Register handlers
+    # Register all command handlers
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("done", done_command))
     application.add_handler(CommandHandler("missed", missed_command))
@@ -97,11 +104,12 @@ def main():
     application.add_handler(CommandHandler("delete", delete_command))
     application.add_handler(CommandHandler("morning", morning_command))
 
-    # Morning sequence callbacks
+    # Callback handlers for the morning sequence (buttons)
     application.add_handler(CallbackQueryHandler(morning_lock_callback, pattern="morning_lock"))
     application.add_handler(CallbackQueryHandler(plan_decision_callback, pattern="plan_(same|change)"))
 
-    # Message handlers for morning sequence (handle text messages while in morning state)
+    # Message handlers for the morning sequence (text messages)
+    # These will process wake‑up time and new plan input
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_morning_message))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_new_plan_during_morning))
 
