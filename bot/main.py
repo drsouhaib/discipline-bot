@@ -1,5 +1,6 @@
 import logging
 import sys
+from telegram import BotCommand, Update
 from telegram.ext import Application, CommandHandler, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
 from bot.config import BOT_TOKEN, LOG_LEVEL
 from bot.handlers.commands import *
@@ -41,9 +42,30 @@ except Exception as e:
 # Start the scheduler
 scheduler.start()
 
+# Define the bot command menu (visible when user types "/")
+commands = [
+    BotCommand("start", "Start the bot (onboarding)"),
+    BotCommand("morning", "Manually start the morning sequence"),
+    BotCommand("status", "View today's progress"),
+    BotCommand("done", "Mark a task done (e.g., /done Fajr)"),
+    BotCommand("missed", "Mark a task missed"),
+    BotCommand("focus", "Start a focus timer (e.g., /focus 25)"),
+    BotCommand("score", "Show today's discipline score"),
+    BotCommand("weekly", "Weekly report"),
+    BotCommand("silent", "Disable reminders for today"),
+    BotCommand("loud", "Enable reminders"),
+    BotCommand("export", "Export all your data"),
+    BotCommand("delete", "Delete all your data"),
+]
+
+async def post_init(application: Application):
+    """Set the command menu when the bot starts."""
+    await application.bot.set_my_commands(commands)
+    logger.info("Command menu set.")
+
 def main():
-    # Create Application
-    application = Application.builder().token(BOT_TOKEN).build()
+    # Create the application with post_init callback
+    application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     # Conversation handler for onboarding
     conv_handler = ConversationHandler(
@@ -59,7 +81,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel_onboarding)],
     )
 
-    # Register handlers
+    # Register all handlers
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("done", done_command))
     application.add_handler(CommandHandler("missed", missed_command))
@@ -73,7 +95,7 @@ def main():
     application.add_handler(CommandHandler("addfuture", addfuture_command))
     application.add_handler(CommandHandler("export", export_command))
     application.add_handler(CommandHandler("delete", delete_command))
-    application.add_handler(CommandHandler("morning", morning_command))  # <-- NEW command
+    application.add_handler(CommandHandler("morning", morning_command))
     application.add_handler(CallbackQueryHandler(morning_lock_callback, pattern="morning_lock"))
 
     # Start the bot
